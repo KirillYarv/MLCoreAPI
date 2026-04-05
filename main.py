@@ -6,7 +6,7 @@ miner = AssociationRulesMiner(csv_path='Transactions.csv', json_cache_path='data
 app = FastAPI()
 
 @app.get("/")
-def get_pairs():
+def get_main():
     return "It`s root dir.         /api/ARLs - the ARL results data"
 
 @app.get("/api/pairs")
