@@ -1,12 +1,14 @@
 import json
-import pandas as pd
 from pathlib import Path
+
 from apyori import apriori
+
+from ..repository.ArlRepository import ArlRepository
 
 
 class AssociationRulesMiner:
-    def __init__(self, csv_path: str, json_cache_path: str):
-        self.csv_path = Path(csv_path)
+    def __init__(self, json_cache_path: str, arl_repo: ArlRepository):
+        self.arl_repo = arl_repo
         self.json_cache_path = Path(json_cache_path)
         self._pairs_arl = []
 
@@ -20,7 +22,7 @@ class AssociationRulesMiner:
         # 1. Попытка загрузить из кеша
         if self.json_cache_path.exists():
             try:
-                with open(self.json_cache_path, 'r', encoding='utf-8') as f:
+                with open(self.json_cache_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     if data:
                         return data
@@ -31,29 +33,15 @@ class AssociationRulesMiner:
         return self._calculate_rules()
 
     def _calculate_rules(self) -> list:
-        if not self.csv_path.exists():
-            return []
-
-        # Загрузка и трансформация данных
-        df = pd.read_csv(self.csv_path, delimiter=';')
-
-        # Убираем колонку 'number', оставляем только товары (столбцы с 1 и 0)
-        item_columns = [col for col in df.columns if col != 'number']
-
-        # Оптимизированный сбор транзакций (быстрее чем iterrows)
-        transactions = df[item_columns].apply(
-            lambda x: x.index[x == 1].tolist(), axis=1
-        ).tolist()
-
+        transactions = self.arl_repo.get_transactions(limit=-1)
         # Запуск алгоритма Apriori
-        # Исправлено: min_confidence (была опечатка)
         rules = apriori(
             transactions=transactions,
-            min_support=0.0029,
-            min_confidence=0.10,
-            min_lift=3,
-            min_length=3,
-            max_length=3
+            min_support=0.0005,
+            min_confidence=0.09,
+            min_lift=2.5,
+            min_length=2,
+            max_length=2,
         )
 
         # Извлекаем только списки товаров из объектов RelationRecord
@@ -65,5 +53,5 @@ class AssociationRulesMiner:
         return pairs
 
     def _save_to_cache(self, data: list):
-        with open(self.json_cache_path, 'w', encoding='utf-8') as f:
+        with open(self.json_cache_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
