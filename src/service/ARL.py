@@ -1,5 +1,10 @@
+import glob
 import json
+import logging
+from multiprocessing import Pool
 from pathlib import Path
+from this import s
+from time import perf_counter
 
 from apyori import apriori
 
@@ -7,51 +12,104 @@ from ..repository.ArlRepository import ArlRepository
 
 
 class AssociationRulesMiner:
-    def __init__(self, json_cache_path: str, arl_repo: ArlRepository):
+    def __init__(self, arl_repo: ArlRepository, cache_dir: str = ""):
         self.arl_repo = arl_repo
-        self.json_cache_path = Path(json_cache_path)
         self._pairs_arl = []
+        self._cache_dir = cache_dir
 
     def get_pairs(self) -> list:
         """Публичный метод для получения ассоциативных пар."""
+        data_paths = list(glob.glob(f"{self._cache_dir}data_*.json"))
+
         if not self._pairs_arl:
-            self._pairs_arl = self._load_or_calculate()
+            self._pairs_arl = self._load_or_calculate(data_paths)
         return self._pairs_arl
 
-    def _load_or_calculate(self) -> list:
+    def _load_or_calculate(self, data_paths: list[Path]) -> list:
         # 1. Попытка загрузить из кеша
-        if self.json_cache_path.exists():
-            try:
-                with open(self.json_cache_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if data:
-                        return data
-            except json.JSONDecodeError:
-                pass
+        data = self._load_cached_data(data_paths)
 
         # 2. Расчет, если кеш пуст или отсутствует
-        return self._calculate_rules()
+        if not data:
+            data = self._calculate_rules()
 
-    def _calculate_rules(self) -> list:
-        transactions = self.arl_repo.get_transactions(limit=-1)
+        return data
+
+    def _load_cached_data(self, data_paths: list[Path]) -> list:
+        data = []
+        for path in data_paths:
+            path = Path(path)
+            if path.exists():
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        data.extend(json.load(f))
+                except json.JSONDecodeError:
+                    pass
+        return data
+
+    def _get_results(self, transactions_postfix: str) -> tuple[float, float]:
+        print(transactions_postfix)
+        # получение транзакций из одной партицы
+        transactions, time = self.arl_repo.get_transactions(transactions_postfix)
+
         # Запуск алгоритма Apriori
+        start = perf_counter()
         rules = apriori(
             transactions=transactions,
-            min_support=0.0005,
+            min_support=0.0008,
             min_confidence=0.09,
             min_lift=2.5,
             min_length=2,
             max_length=2,
+        )
+        end = perf_counter()
+
+        apriori_time = end - start
+
+        logging.info(
+            f"Calculation apriori{transactions_postfix} time: {apriori_time} seconds\n"
         )
 
         # Извлекаем только списки товаров из объектов RelationRecord
         pairs = [list(rule.items) for rule in rules]
 
         # Сохраняем результат в кеш
-        self._save_to_cache(pairs)
+        self._save_to_cache(pairs, f"data{transactions_postfix}.json")
 
-        return pairs
+        return time, apriori_time
 
-    def _save_to_cache(self, data: list):
-        with open(self.json_cache_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
+    def _calculate_rules(self) -> list:
+        query_time = 0
+        apriori_time = 0
+        transactions_postfixes = [
+            "_2018_09",
+            "_2019_03",
+            "_2019_05",
+            "_2019_09",
+            "_2019_11",
+            "_2020_03",
+            "_2020_05",
+        ]
+        with Pool(processes=10) as pool:
+            start = perf_counter()
+
+            r = pool.map(self._get_results, transactions_postfixes)
+            for result in r:
+                query_time += result[0]
+                apriori_time += result[1]
+
+            end = perf_counter()
+
+        logging.info(f"\nsql_query took {query_time} seconds")
+        logging.info(f"apriopi multythread took {apriori_time} seconds")
+        logging.info(f"Total time: {end - start} seconds")
+
+        data_paths = []
+        for i in transactions_postfixes:
+            data_paths.append(f"{self._cache_dir}data{i}.json")
+
+        return self._load_cached_data(data_paths)
+
+    def _save_to_cache(self, data: list, path_str: str):
+        with open(Path(path_str), "w", encoding="utf-8") as f:
+            json.dump(data, f)
