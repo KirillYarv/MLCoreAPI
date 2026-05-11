@@ -1,30 +1,51 @@
-import json
 import logging
-from pathlib import Path
+from typing import Any, Dict
 
 from fastapi import FastAPI
 
 from src.repository.ArlRepository import ArlRepository
+from src.repository.DbInfoRepository import DbInfoRepository
 from src.service.ARL import AssociationRulesMiner
+from src.service.DbConnectionService import DbConnectionService
 
 logging.basicConfig(level=logging.INFO, filename="py_log.log")
 
 miner = AssociationRulesMiner(arl_repo=ArlRepository())
+db_connection_service = DbConnectionService(db_info_repo=DbInfoRepository())
 
 app = FastAPI()
+
+
+def success_response(data: Any, message: str = "OK") -> Dict[str, Any]:
+    """Build a unified successful API response payload.
+
+    Args:
+        data: Business payload to return to client.
+        message: Human-readable status message.
+
+    Returns:
+        Dict[str, Any]: Standard API response envelope.
+    """
+    return {"status": "success", "message": message, "data": data}
 
 
 @app.get("/")
 def get_main():
     logging.info("Catch /")
-    return f"It`s root dir.         /api/ARLs - the ARL results data"
+    return success_response(
+        data={
+            "service": "Market Basket Analysis API",
+            "routes": ["/api/pairs", "/api/pairs/{product_name}", "/db/isconnect"],
+        },
+        message="Service is running",
+    )
 
 
 @app.get("/api/pairs")
 def get_pairs():
     logging.info("Catch /api/pairs")
-
-    return miner.get_pairs()
+    pairs = miner.get_pairs()
+    return success_response(data=pairs, message="Association pairs fetched")
 
 
 @app.get("/api/pairs/{product_name}")
@@ -40,7 +61,10 @@ def get_pairs_by_name(product_name: str):
         if product_name in pair[1]:
             filtered_data.append(pair[0])
 
-    return set(filtered_data)
+    return success_response(
+        data=list(set(filtered_data)),
+        message=f"Related products fetched for '{product_name}'",
+    )
 
 
 @app.get("/db/transactions_2018_09")
@@ -49,7 +73,14 @@ def get_transactions():
     get_transactions = ArlRepository()
     transactions = get_transactions.get_transactions("_2018_09")
 
-    return f"Data from Database: - {transactions}"
+    return success_response(
+        data=transactions,
+        message="Transactions fetched from database partition _2018_09",
+    )
 
 
-# python3.10-venv
+@app.get("/db/isconnect")
+def is_connect():
+    logging.info("Catch /db/isconnect")
+    db_status = db_connection_service.check_connection()
+    return success_response(data=db_status, message="Database connectivity check completed")
