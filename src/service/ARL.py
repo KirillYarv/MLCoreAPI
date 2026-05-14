@@ -10,6 +10,13 @@ from apyori import apriori
 
 from ..repository.ArlRepository import ArlRepository
 
+logging.basicConfig(
+    level=logging.INFO,
+    filename="py_log.log",
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
 
 class AssociationRulesMiner:
     def __init__(self, arl_repo: ArlRepository, cache_dir: str = ""):
@@ -100,7 +107,7 @@ class AssociationRulesMiner:
 
             end = perf_counter()
 
-        logging.info(f"\nsql_query took {query_time} seconds")
+        logging.info(f"sql_query took {query_time} seconds")
         logging.info(f"apriopi multythread took {apriori_time} seconds")
         logging.info(f"Total time: {end - start} seconds")
 
