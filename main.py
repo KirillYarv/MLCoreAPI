@@ -3,36 +3,46 @@ from typing import Any, Dict
 
 from fastapi import FastAPI
 
+from src.repository.AlsRepository import AlsRepository
 from src.repository.ArlRepository import ArlRepository
 from src.repository.DbInfoRepository import DbInfoRepository
+from src.service.ALS import AlternatingLeastSquaresService
 from src.service.ARL import AssociationRulesMiner
 from src.service.DbConnectionService import DbConnectionService
 
-logging.basicConfig(level=logging.INFO, filename="py_log.log")
+logging.basicConfig(
+    level=logging.INFO,
+    filename="py_log.log",
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 miner = AssociationRulesMiner(arl_repo=ArlRepository())
+als_service = AlternatingLeastSquaresService(als_repo=AlsRepository())
 db_connection_service = DbConnectionService(db_info_repo=DbInfoRepository())
 
 app = FastAPI()
 
 
-def success_response(data: Any, message: str = "OK") -> Dict[str, Any]:
+def get_response(status: str, data: Any, message: str = "OK") -> Dict[str, Any]:
     """Build a unified successful API response payload.
 
     Args:
+        status: Status of the response.
         data: Business payload to return to client.
         message: Human-readable status message.
 
     Returns:
         Dict[str, Any]: Standard API response envelope.
     """
-    return {"status": "success", "message": message, "data": data}
+    return {"status": status, "message": message, "data": data}
 
 
 @app.get("/")
 def get_main():
     logging.info("Catch /")
-    return success_response(
+    return get_response(
+        status="success",
         data={
             "service": "Market Basket Analysis API",
             "routes": ["/api/pairs", "/api/pairs/{product_name}", "/db/isconnect"],
@@ -45,7 +55,11 @@ def get_main():
 def get_pairs():
     logging.info("Catch /api/pairs")
     pairs = miner.get_pairs()
-    return success_response(data=pairs, message="Association pairs fetched")
+    return get_response(
+        status="success",
+        data=pairs,
+        message="Association pairs fetched",
+    )
 
 
 @app.get("/api/pairs/{product_name}")
@@ -61,9 +75,37 @@ def get_pairs_by_name(product_name: str):
         if product_name in pair[1]:
             filtered_data.append(pair[0])
 
-    return success_response(
+    return get_response(
+        status="success",
         data=list(set(filtered_data)),
         message=f"Related products fetched for '{product_name}'",
+    )
+
+
+@app.get("/api/als/recommendations")
+def get_als_recommendations(top_k: int = 12):
+    """Return ALS recommendations for users from configured partitions.
+
+    Args:
+        top_k: Number of recommended products per user.
+
+    Returns:
+        Dict[str, Any]: Unified API response with ALS recommendation payload.
+    """
+    logging.info("Catch /api/als/recommendations")
+    try:
+        recommendations = als_service.get_recommendations(top_k=top_k)
+    except RuntimeError as error:
+        return get_response(
+            status="error",
+            data={"reason": "gpu_unavailable"},
+            message=str(error),
+        )
+
+    return get_response(
+        status="success",
+        data=recommendations,
+        message="ALS recommendations fetched",
     )
 
 
@@ -73,7 +115,8 @@ def get_transactions():
     get_transactions = ArlRepository()
     transactions = get_transactions.get_transactions("_2018_09")
 
-    return success_response(
+    return get_response(
+        status="success",
         data=transactions,
         message="Transactions fetched from database partition _2018_09",
     )
@@ -83,4 +126,15 @@ def get_transactions():
 def is_connect():
     logging.info("Catch /db/isconnect")
     db_status = db_connection_service.check_connection()
-    return success_response(data=db_status, message="Database connectivity check completed")
+
+    if not db_status["is_connected"]:
+        return get_response(
+            status="error",
+            data=db_status,
+            message="Database is not connected",
+        )
+    return get_response(
+        status="success",
+        data=db_status,
+        message="Database connectivity check completed",
+    )
