@@ -1,3 +1,4 @@
+import os
 from typing import Tuple
 
 import psycopg2
@@ -12,11 +13,11 @@ class DbInfoRepository:
 
     def __init__(
         self,
-        database: str = "Recommendation",
-        user: str = "postgres",
-        password: str = "govgay111",
+        database: str = os.getenv("DB_DATABASE") or "",
+        user: str = os.getenv("DB_USERNAME") or "",
+        password: str = os.getenv("DB_PASSWORD") or "",
         host: str = "host.docker.internal",
-        port: int = 5432,
+        port: int = int(os.getenv("DB_PORT") or 5432),
     ) -> None:
         """Store database connection settings.
 

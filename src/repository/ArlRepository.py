@@ -1,19 +1,25 @@
 import logging
+import os
 from time import perf_counter
 
 import psycopg2
 
-logging.basicConfig(level=logging.INFO, filename="py_log.log")
+logging.basicConfig(
+    level=logging.INFO,
+    filename="py_log.log",
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 
 class ArlRepository:
     def get_transactions(self, transactions_postfix: str, limit: int = -1):
         self.connection = psycopg2.connect(
-            database="Recommendation",
-            user="postgres",
-            password="000000",
-            host="localhost",
-            port=5432,
+            database=os.getenv("DB_DATABASE") or "",
+            user=os.getenv("DB_USERNAME") or "",
+            password=os.getenv("DB_PASSWORD") or "",
+            host="host.docker.internal",
+            port=int(os.getenv("DB_PORT") or 5432),
         )
 
         limit_str = ""
