@@ -45,7 +45,12 @@ def get_main():
         status="success",
         data={
             "service": "Market Basket Analysis API",
-            "routes": ["/api/pairs", "/api/pairs/{product_name}", "/db/isconnect"],
+            "routes": [
+                "/api/pairs",
+                "/api/pairs/{product_name}",
+                "/api/als/recommendations/{user_id}",
+                "/db/isconnect",
+            ],
         },
         message="Service is running",
     )
@@ -82,17 +87,18 @@ def get_pairs_by_name(product_name: str):
     )
 
 
-@app.get("/api/als/recommendations")
-def get_als_recommendations(top_k: int = 12):
-    """Return ALS recommendations for users from configured partitions.
+@app.get("/api/als/recommendations/{user_id}")
+def get_als_recommendations(user_id: str, top_k: int = 12):
+    """Return ALS recommendations for a specific user.
 
     Args:
+        user_id: Target customer identifier.
         top_k: Number of recommended products per user.
 
     Returns:
-        Dict[str, Any]: Unified API response with ALS recommendation payload.
+        Dict[str, Any]: Unified API response with one user's recommendations.
     """
-    logging.info("Catch /api/als/recommendations")
+    logging.info("Catch /api/als/recommendations/%s", user_id)
     try:
         recommendations = als_service.get_recommendations(top_k=top_k)
     except RuntimeError as error:
@@ -102,10 +108,26 @@ def get_als_recommendations(top_k: int = 12):
             message=str(error),
         )
 
+    user_recommendations = next(
+        (
+            recommendation
+            for recommendation in recommendations
+            if str(recommendation.get("customer_id")) == str(user_id)
+        ),
+        None,
+    )
+
+    if user_recommendations is None:
+        return get_response(
+            status="error",
+            data={"reason": "user_not_found", "user_id": user_id},
+            message=f"Recommendations for user '{user_id}' were not found",
+        )
+
     return get_response(
         status="success",
-        data=recommendations,
-        message="ALS recommendations fetched",
+        data=user_recommendations,
+        message=f"ALS recommendations fetched for user '{user_id}'",
     )
 
 

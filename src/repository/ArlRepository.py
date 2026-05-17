@@ -13,20 +13,35 @@ logging.basicConfig(
 
 
 class ArlRepository:
+    def __init__(
+        self,
+        database: str = os.getenv("DB_DATABASE") or "",
+        user: str = os.getenv("DB_USERNAME") or "",
+        password: str = os.getenv("DB_PASSWORD") or "",
+        host: str = "host.docker.internal",
+        port: int = int(os.getenv("DB_PORT") or 5432),
+    ) -> None:
+        """Initialize repository with PostgreSQL connection settings."""
+        self.database = database
+        self.user = user
+        self.password = password
+        self.host = host
+        self.port = port
+
     def get_transactions(self, transactions_postfix: str, limit: int = -1):
-        self.connection = psycopg2.connect(
-            database=os.getenv("DB_DATABASE") or "",
-            user=os.getenv("DB_USERNAME") or "",
-            password=os.getenv("DB_PASSWORD") or "",
-            host="host.docker.internal",
-            port=int(os.getenv("DB_PORT") or 5432),
+        connection = psycopg2.connect(
+            database=self.database,
+            user=self.user,
+            password=self.password,
+            host=self.host,
+            port=self.port,
         )
 
         limit_str = ""
         if limit > 0:
             limit_str = f" limit {limit}"
 
-        with self.connection.cursor() as cursor:
+        with connection.cursor() as cursor:
             start = perf_counter()
 
             cursor.execute(

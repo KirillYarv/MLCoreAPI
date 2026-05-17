@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from implicit.als import AlternatingLeastSquares
 from implicit.evaluation import mean_average_precision_at_k
-from scipy.sparse import coo_matrix, csr_matrix
+from scipy.sparse import coo_matrix
 
 from src.repository.AlsRepository import AlsRepository
 
@@ -56,8 +56,8 @@ class AlternatingLeastSquaresService:
         self._cached_recommendations: List[Dict[str, Any]] = []
         self._last_map_at_k: float | None = None
 
-        self.ALL_USERS = self.als_repo.get_count("customers", "customer_id")
-        self.ALL_ITEMS = self.als_repo.get_count("articles", "article_id")
+        self.all_users_count: int = self.als_repo.get_count("customers", "customer_id")
+        self.all_items_count: int = self.als_repo.get_count("articles", "article_id")
 
     def get_recommendations(self, top_k: int = 12) -> List[Dict[str, Any]]:
         """Return recommendations, using cache files when available.
@@ -123,14 +123,14 @@ class AlternatingLeastSquaresService:
             "_2020_05",
         ]
 
-        # with Pool(processes=self.pool_processes) as pool:
-        #     fetch_start = perf_counter()
-        #     pool.map(self._get_repository_data, table_postfixes)
-        #     fetch_end = perf_counter()
-        #     logging.info(
-        #         "ALS data fetch multiprocessing completed in %.3f sec",
-        #         fetch_end - fetch_start,
-        #     )
+        with Pool(processes=self.pool_processes) as pool:
+            fetch_start = perf_counter()
+            pool.map(self._get_repository_data, table_postfixes)
+            fetch_end = perf_counter()
+            logging.info(
+                "ALS data fetch multiprocessing completed in %.3f sec",
+                fetch_end - fetch_start,
+            )
 
         interactions_df = self._build_interactions_dataframe_from_cache(table_postfixes)
         if interactions_df.empty:
@@ -243,9 +243,7 @@ class AlternatingLeastSquaresService:
         interactions_df["user_idx"] = interactions_df["customer_id"].map(user_map)
         interactions_df["item_idx"] = interactions_df["article_id"].map(item_map)
 
-        matrix = self._to_user_item_coo(
-            interactions_df, self.ALL_USERS, self.ALL_ITEMS
-        ).tocsr()
+        matrix = self._to_user_item_coo(interactions_df).tocsr()
 
         logging.info("matrix shape: %s", matrix.shape)
 
@@ -326,8 +324,8 @@ class AlternatingLeastSquaresService:
 
         df_train, df_test = self._train_test_split_over(interactions_df)
 
-        coo_train = self._to_user_item_coo(df_train, self.ALL_USERS, self.ALL_ITEMS)
-        coo_test = self._to_user_item_coo(df_test, self.ALL_USERS, self.ALL_ITEMS)
+        coo_train = self._to_user_item_coo(df_train)
+        coo_test = self._to_user_item_coo(df_test)
 
         csr_train = coo_train.tocsr()
         csr_test = coo_test.tocsr()
@@ -342,15 +340,15 @@ class AlternatingLeastSquaresService:
             )
         )
 
-    def _to_user_item_coo(
-        self, df: pd.DataFrame, ALL_USERS: int, ALL_ITEMS: int
-    ) -> coo_matrix:
+    def _to_user_item_coo(self, df: pd.DataFrame) -> coo_matrix:
         """Turn a dataframe with transactions into a COO sparse items x users matrix"""
         row = df["user_idx"].values
         col = df["item_idx"].values
         data = np.ones(df.shape[0])
 
-        coo = coo_matrix((data, (row, col)), shape=(ALL_USERS, ALL_ITEMS))
+        coo = coo_matrix(
+            (data, (row, col)), shape=(self.all_users_count, self.all_items_count)
+        )
         return coo
 
     def _train_test_split_over(
