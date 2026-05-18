@@ -24,6 +24,7 @@ class AlsRepository:
         password: str = os.getenv("DB_PASSWORD") or "",
         host: str = "host.docker.internal",
         port: int = int(os.getenv("DB_PORT") or 5432),
+        dsn: str = os.getenv("DATABASE_URL") or "",
     ) -> None:
         """Initialize repository with PostgreSQL connection settings."""
         self.database = database
@@ -31,6 +32,7 @@ class AlsRepository:
         self.password = password
         self.host = host
         self.port = port
+        self.dsn = dsn
 
     def get_user_item_interactions(
         self, transactions_postfix: str
@@ -57,14 +59,8 @@ class AlsRepository:
         """
         start = perf_counter()
 
-        connection = psycopg2.connect(
-            database=self.database,
-            user=self.user,
-            password=self.password,
-            host=self.host,
-            port=self.port,
-        )
-        cursor_name = f"als_stream_{transactions_postfix.strip('_')}_{uuid4().hex[:8]}"
+        connection = psycopg2.connect(dsn=self.dsn, host=self.host)
+        cursor_name = f"als_stream_{transactions_postfix.strip('_')}_{uuid4()}"
 
         try:
             with connection.cursor(name=cursor_name) as cursor:
@@ -97,13 +93,7 @@ class AlsRepository:
         """
         start = perf_counter()
 
-        connection = psycopg2.connect(
-            database=self.database,
-            user=self.user,
-            password=self.password,
-            host=self.host,
-            port=self.port,
-        )
+        connection = psycopg2.connect(dsn=self.dsn, host=self.host)
 
         with connection.cursor() as cursor:
             cursor.execute(query)

@@ -1,6 +1,8 @@
 import logging
 import os
 from time import perf_counter
+from typing import List, Tuple
+from uuid import uuid4
 
 import psycopg2
 
@@ -41,20 +43,28 @@ class ArlRepository:
         if limit > 0:
             limit_str = f" limit {limit}"
 
-        with connection.cursor() as cursor:
+        query: str = f"select \
+                   	    t_dat, \
+                        customer_id, \
+                        string_agg(prod_name, '$$ ') \
+                    from transactions{transactions_postfix} t \
+                    left join articles a \
+                        on a.article_id = t.article_id \
+                    group by t_dat, customer_id{limit_str}"
+
+        cursor_name = f"arl_stream_{transactions_postfix.strip('_')}_{uuid4()}"
+
+        with connection.cursor(name=cursor_name) as cursor:
+            cursor.itersize = 20_000
             start = perf_counter()
 
-            cursor.execute(
-                f"select \
-               	    t_dat, \
-                    customer_id, \
-                    string_agg(prod_name, '$$ ') \
-                from transactions{transactions_postfix} t \
-                left join articles a \
-                    on a.article_id = t.article_id \
-                group by t_dat, customer_id{limit_str}"
-            )
-            transactions = cursor.fetchall()
+            cursor.execute(query)
+            transactions: List[Tuple[str, str, int]] = []
+            while True:
+                rows = cursor.fetchmany(20_000)
+                if not rows:
+                    break
+                transactions.extend(rows)
 
             prod_names = []
 
