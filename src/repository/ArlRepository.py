@@ -59,7 +59,7 @@ class ArlRepository:
             start = perf_counter()
 
             cursor.execute(query)
-            transactions: List[Tuple[str, str, int]] = []
+            transactions: List[Tuple[str, str, str]] = []
             while True:
                 rows = cursor.fetchmany(20_000)
                 if not rows:
