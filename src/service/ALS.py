@@ -29,6 +29,7 @@ class AlternatingLeastSquaresService:
         self,
         als_repo: AlsRepository,
         cache_dir: str = "",
+        cache_prefix: str = "data_for_als",
         factors: int = 40,
         regularization: float = 0.01,
         iterations: int = 20,
@@ -40,6 +41,7 @@ class AlternatingLeastSquaresService:
         Args:
             als_repo: Repository for reading interaction data.
             cache_dir: Relative/absolute directory for JSON cache files.
+            cache_prefix: Prefix for cache file names.
             factors: Number of latent factors in ALS model.
             regularization: L2 regularization coefficient.
             iterations: Number of ALS optimization iterations.
@@ -48,6 +50,7 @@ class AlternatingLeastSquaresService:
         """
         self.als_repo = als_repo
         self.cache_dir = cache_dir
+        self.cache_prefix = cache_prefix
         self.factors = factors
         self.regularization = regularization
         self.iterations = iterations
@@ -68,7 +71,9 @@ class AlternatingLeastSquaresService:
         Returns:
             List[Dict[str, Any]]: Recommendation records.
         """
-        cache_paths = list(glob.glob(f"{self.cache_dir}als_recs_*.json"))
+        cache_paths = list(
+            glob.glob(f"{self.cache_dir}{self.cache_prefix}_results*.json")
+        )
         if not self._cached_recommendations:
             self._cached_recommendations = self._load_or_calculate(cache_paths, top_k)
         return self._cached_recommendations
@@ -101,7 +106,7 @@ class AlternatingLeastSquaresService:
             transactions_postfix: Transactions table postfix, e.g. ``_2019_03``.
         """
         data = self.als_repo.get_user_item_interactions(transactions_postfix)
-        self._save_to_cache(data, f"data_{transactions_postfix}.json")
+        self._save_to_cache(data, f"{self.cache_prefix}{transactions_postfix}.json")
 
     def _calculate_recommendations(self, top_k: int) -> List[Dict[str, Any]]:
         """Fetch interactions in parallel, then train ALS in one synchronized flow.
@@ -134,7 +139,7 @@ class AlternatingLeastSquaresService:
 
         interactions_df = self._build_interactions_dataframe_from_cache(table_postfixes)
         if interactions_df.empty:
-            self._save_to_cache([], "als_recs_all.json")
+            self._save_to_cache([], f"{self.cache_prefix}_results.json")
             return []
 
         logging.info(f"built interactions_df shape: {interactions_df.shape}")
@@ -145,7 +150,7 @@ class AlternatingLeastSquaresService:
         logging.info(f"filtered interactions_df shape: {interactions_df.shape}")
 
         recs = self._train_single_model(interactions_df=interactions_df, top_k=top_k)
-        self._save_to_cache(recs, "als_recs_all.json")
+        self._save_to_cache(recs, f"{self.cache_prefix}_results_all.json")
 
         return recs
 
@@ -166,7 +171,7 @@ class AlternatingLeastSquaresService:
         unified_df["t_dat"] = pd.to_datetime(unified_df["t_dat"])
 
         for postfix in table_postfixes:
-            path = Path(f"{self.cache_dir}data_{postfix}.json")
+            path = Path(f"{self.cache_dir}{self.cache_prefix}{postfix}.json")
             if not path.exists():
                 continue
             try:

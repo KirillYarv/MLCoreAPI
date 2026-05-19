@@ -3,7 +3,6 @@ import json
 import logging
 from multiprocessing import Pool
 from pathlib import Path
-from this import s
 from time import perf_counter
 
 from apyori import apriori
@@ -19,30 +18,39 @@ logging.basicConfig(
 
 
 class AssociationRulesMiner:
-    def __init__(self, arl_repo: ArlRepository, cache_dir: str = ""):
+    def __init__(
+        self,
+        arl_repo: ArlRepository,
+        cache_dir: str = "",
+        cache_prefix: str = "data_for_arl",
+    ):
         self.arl_repo = arl_repo
         self._pairs_arl = []
         self._cache_dir = cache_dir
+        self._cache_prefix = cache_prefix
 
     def get_pairs(self) -> list:
         """Публичный метод для получения ассоциативных пар."""
-        data_paths = list(glob.glob(f"{self._cache_dir}data_*.json"))
-
+        data_paths = list(glob.glob(f"{self._cache_dir}{self._cache_prefix}*.json"))
+        logging.info("Getting pairs from cache")
         if not self._pairs_arl:
             self._pairs_arl = self._load_or_calculate(data_paths)
         return self._pairs_arl
 
-    def _load_or_calculate(self, data_paths: list[Path]) -> list:
+    def _load_or_calculate(self, data_paths: list[str]) -> list:
         # 1. Попытка загрузить из кеша
+
+        logging.info(f"Loading cached data from {data_paths}")
         data = self._load_cached_data(data_paths)
 
         # 2. Расчет, если кеш пуст или отсутствует
         if not data:
+            logging.info("Cache is empty or missing, calculating rules")
             data = self._calculate_rules()
 
         return data
 
-    def _load_cached_data(self, data_paths: list[Path]) -> list:
+    def _load_cached_data(self, data_paths: list[str]) -> list:
         data = []
         for path in data_paths:
             path = Path(path)
@@ -81,7 +89,7 @@ class AssociationRulesMiner:
         pairs = [list(rule.items) for rule in rules]
 
         # Сохраняем результат в кеш
-        self._save_to_cache(pairs, f"data{transactions_postfix}.json")
+        self._save_to_cache(pairs, f"{self._cache_prefix}{transactions_postfix}.json")
 
         return time, apriori_time
 
@@ -113,7 +121,7 @@ class AssociationRulesMiner:
 
         data_paths = []
         for i in transactions_postfixes:
-            data_paths.append(f"{self._cache_dir}data{i}.json")
+            data_paths.append(f"{self._cache_dir}{self._cache_prefix}{i}.json")
 
         return self._load_cached_data(data_paths)
 
