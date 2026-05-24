@@ -8,9 +8,8 @@ from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
-from implicit.als import AlternatingLeastSquares
-from implicit.evaluation import mean_average_precision_at_k
-from scipy.sparse import coo_matrix
+from implicit.gpu.als import AlternatingLeastSquares
+from scipy.sparse import coo_matrix, csr_matrix, load_npz, save_npz
 
 from src.repository.AlsRepository import AlsRepository
 
@@ -30,9 +29,9 @@ class AlternatingLeastSquaresService:
         als_repo: AlsRepository,
         cache_dir: str = "",
         cache_prefix: str = "data_for_als",
-        factors: int = 40,
+        factors: int = 200,
         regularization: float = 0.01,
-        iterations: int = 20,
+        iterations: int = 3,
         pool_processes: int = 3,
         use_gpu: bool = True,
     ) -> None:
@@ -57,7 +56,10 @@ class AlternatingLeastSquaresService:
         self.pool_processes = pool_processes
         self.use_gpu = use_gpu
         self._cached_recommendations: List[Dict[str, Any]] = []
+        self._cached_top_k: int | None = None
         self._last_map_at_k: float | None = None
+        self._last_ndcg_at_k: float | None = None
+        self._last_precision_at_k: float | None = None
 
         self.all_users_count: int = self.als_repo.get_count("customers", "customer_id")
         self.all_items_count: int = self.als_repo.get_count("articles", "article_id")
@@ -71,20 +73,130 @@ class AlternatingLeastSquaresService:
         Returns:
             List[Dict[str, Any]]: Recommendation records.
         """
+        if self._cached_recommendations and self._cached_top_k == top_k:
+            return self._cached_recommendations
+
         cache_paths = list(
             glob.glob(f"{self.cache_dir}{self.cache_prefix}_results*.json")
         )
-        if not self._cached_recommendations:
-            self._cached_recommendations = self._load_or_calculate(cache_paths, top_k)
+        self._cached_recommendations = self._load_or_calculate(cache_paths, top_k)
+        self._cached_top_k = top_k
         return self._cached_recommendations
+
+    def refresh_recommendations(self, top_k: int = 12) -> List[Dict[str, Any]]:
+        """Force recomputation of ALS recommendations.
+
+        This method clears in-memory and file artifacts to rebuild the full
+        pipeline from database partitions.
+
+        Args:
+            top_k: Number of recommended items per user.
+
+        Returns:
+            List[Dict[str, Any]]: Recomputed recommendation records.
+        """
+        self._cached_recommendations = []
+        self._cached_top_k = None
+
+        for artifact_path in self._artifact_paths().values():
+            if artifact_path.exists():
+                artifact_path.unlink()
+
+        self._last_map_at_k = None
+        self._last_ndcg_at_k = None
+        self._last_precision_at_k = None
+
+        cache_paths = list(
+            glob.glob(f"{self.cache_dir}{self.cache_prefix}_results*.json")
+        )
+        for cache_path in cache_paths:
+            path = Path(cache_path)
+            if path.exists():
+                path.unlink()
+
+        recommendations = self._calculate_recommendations(top_k=top_k)
+        self._cached_recommendations = recommendations
+        self._cached_top_k = top_k
+        return recommendations
 
     def _load_or_calculate(
         self, cache_paths: List[str], top_k: int
     ) -> List[Dict[str, Any]]:
+        if self._has_model_artifacts():
+            logging.info(
+                "ALS artifacts found. Loading model and generating recommendations."
+            )
+            return self._generate_recommendations_from_artifacts(top_k=top_k)
+
         cached = self._load_cached_data(cache_paths)
         if cached:
             return cached
         return self._calculate_recommendations(top_k=top_k)
+
+    def _artifact_paths(self) -> Dict[str, Path]:
+        """Return filesystem paths for persisted ALS artifacts."""
+        return {
+            "model": Path(f"{self.cache_dir}{self.cache_prefix}_model.npz"),
+            "mappings": Path(f"{self.cache_dir}{self.cache_prefix}_mappings.json"),
+            "user_items": Path(f"{self.cache_dir}{self.cache_prefix}_user_items.npz"),
+        }
+
+    def _has_model_artifacts(self) -> bool:
+        """Check whether all required ALS artifacts already exist."""
+        paths = self._artifact_paths()
+        return all(path.exists() for path in paths.values())
+
+    def _save_model_artifacts(
+        self,
+        model: AlternatingLeastSquares,
+        user_dict: Dict[int, Any],
+        item_dict: Dict[int, Any],
+        user_items_matrix: csr_matrix,
+    ) -> None:
+        """Persist trained model, id mappings and user-items matrix to cache."""
+        paths = self._artifact_paths()
+        model.save(str(paths["model"]))
+
+        mappings_payload = {
+            "user_dict": {str(idx): user_id for idx, user_id in user_dict.items()},
+            "item_dict": {str(idx): item_id for idx, item_id in item_dict.items()},
+        }
+        with open(paths["mappings"], "w", encoding="utf-8") as file:
+            json.dump(mappings_payload, file, default=str)
+
+        save_npz(paths["user_items"], user_items_matrix)
+
+    def _load_model_artifacts(
+        self,
+    ) -> Tuple[AlternatingLeastSquares, Dict[int, Any], Dict[int, Any], csr_matrix]:
+        """Load trained model, mappings and sparse user-items matrix from cache."""
+        paths = self._artifact_paths()
+        model = AlternatingLeastSquares.load(str(paths["model"]))
+
+        with open(paths["mappings"], "r", encoding="utf-8") as file:
+            mappings_payload = json.load(file)
+
+        user_dict = {
+            int(idx): user_id for idx, user_id in mappings_payload["user_dict"].items()
+        }
+        item_dict = {
+            int(idx): item_id for idx, item_id in mappings_payload["item_dict"].items()
+        }
+        user_items_matrix = load_npz(paths["user_items"]).tocsr()
+        return model, user_dict, item_dict, user_items_matrix
+
+    def _generate_recommendations_from_artifacts(
+        self, top_k: int
+    ) -> List[Dict[str, Any]]:
+        """Generate recommendations from cached model artifacts without retraining."""
+        model, user_dict, item_dict, user_items_matrix = self._load_model_artifacts()
+        return self._build_recommendations(
+            model=model,
+            user_items_matrix=user_items_matrix,
+            user_dict=user_dict,
+            item_dict=item_dict,
+            top_k=top_k,
+        )
 
     def _load_cached_data(self, cache_paths: List[str]) -> List[Dict[str, Any]]:
         data: List[Dict[str, Any]] = []
@@ -248,6 +360,8 @@ class AlternatingLeastSquaresService:
         interactions_df["user_idx"] = interactions_df["customer_id"].map(user_map)
         interactions_df["item_idx"] = interactions_df["article_id"].map(item_map)
 
+        del user_codes, item_codes, user_map, item_map
+
         matrix = self._to_user_item_coo(interactions_df).tocsr()
 
         logging.info("matrix shape: %s", matrix.shape)
@@ -255,57 +369,24 @@ class AlternatingLeastSquaresService:
         model.fit(matrix)
         logging.info("model fitted")
 
-        self._last_map_at_k = self._evaluate_map_at_k(
+        self._save_model_artifacts(
             model=model,
-            interactions_df=interactions_df,
-            k=top_k,
+            user_dict=user_dict,
+            item_dict=item_dict,
+            user_items_matrix=matrix,
         )
-        logging.info("ALS MAP@%d: %.6f", top_k, self._last_map_at_k)
+        logging.info("ALS model artifacts saved")
 
         logging.info("getting recommendations")
-
-        test_users = (
-            interactions_df["user_idx"].drop_duplicates().to_numpy(dtype=np.int32)
+        recs_by_user = self._build_recommendations(
+            model=model,
+            user_items_matrix=matrix,
+            user_dict=user_dict,
+            item_dict=item_dict,
+            top_k=top_k,
         )
 
-        item_indices, scores = model.recommend(
-            test_users,
-            matrix[test_users],
-            N=top_k,
-            filter_already_liked_items=True,
-        )
-
-        recs_df = pd.DataFrame(
-            {
-                "user_idx": test_users,
-                "item_idx": item_indices.tolist(),
-                "score": scores.tolist(),
-            }
-        ).explode(["item_idx", "score"])
-
-        user_idx_to_customer_id = {idx: user_id for idx, user_id in user_dict.items()}
-        item_idx_to_article_id = {idx: item_id for idx, item_id in item_dict.items()}
-
-        recs_df["customer_id"] = recs_df["user_idx"].map(user_idx_to_customer_id)
-        recs_df["article_id"] = recs_df["item_idx"].map(item_idx_to_article_id)
-        recs_df["score"] = recs_df["score"].astype(float)
-
-        recs_by_user: List[Dict[str, Any]] = []
-        for customer_id, group in recs_df.groupby("customer_id"):
-            recommendations = [
-                {
-                    "article_id": int(row["article_id"]),
-                    "score": float(row["score"]),
-                }
-                for _, row in group.iterrows()
-                if pd.notna(row["article_id"])
-            ]
-            recs_by_user.append(
-                {
-                    "customer_id": customer_id,
-                    "recommendations": recommendations,
-                }
-            )
+        del matrix
 
         train_end = perf_counter()
         logging.info(
@@ -314,36 +395,52 @@ class AlternatingLeastSquaresService:
         )
         return recs_by_user
 
-    def _evaluate_map_at_k(
+    def _build_recommendations(
         self,
         model: AlternatingLeastSquares,
-        interactions_df: pd.DataFrame,
-        k: int,
-    ) -> float:
-        """Compute MAP@K with per-user holdout split.
-
-        For each user with at least 2 interactions, one item is sampled into test,
-        the rest remain in train.
-        """
-        logging.info("MAP@K evaluation started")
-
-        df_train, df_test = self._train_test_split_over(interactions_df)
-
-        coo_train = self._to_user_item_coo(df_train)
-        coo_test = self._to_user_item_coo(df_test)
-
-        csr_train = coo_train.tocsr()
-        csr_test = coo_test.tocsr()
-
-        return float(
-            mean_average_precision_at_k(
-                model,
-                csr_train,
-                csr_test,
-                K=k,
-                show_progress=False,
-            )
+        user_items_matrix: csr_matrix,
+        user_dict: Dict[int, Any],
+        item_dict: Dict[int, Any],
+        top_k: int,
+    ) -> List[Dict[str, Any]]:
+        """Build top-k recommendations for all users from trained model artifacts."""
+        candidate_users = np.where(user_items_matrix.getnnz(axis=1) > 0)[0].astype(
+            np.int32
         )
+        if candidate_users.size == 0:
+            return []
+
+        item_indices, scores = model.recommend(
+            candidate_users,
+            user_items_matrix[candidate_users],
+            N=top_k,
+            filter_already_liked_items=True,
+        )
+
+        recs_df = pd.DataFrame(
+            {
+                "user_idx": candidate_users,
+                "item_idx": item_indices.tolist(),
+                "score": scores.tolist(),
+            }
+        ).explode(["item_idx", "score"])
+
+        recs_df["customer_id"] = recs_df["user_idx"].map(user_dict)
+        recs_df["article_id"] = recs_df["item_idx"].map(item_dict)
+        recs_df["score"] = recs_df["score"].astype(float)
+
+        recs_by_user: List[Dict[str, Any]] = []
+        for customer_id, group in recs_df.groupby("customer_id"):
+            recommendations = [
+                {"article_id": int(row["article_id"]), "score": float(row["score"])}
+                for _, row in group.iterrows()
+                if pd.notna(row["article_id"])
+            ]
+            recs_by_user.append(
+                {"customer_id": customer_id, "recommendations": recommendations}
+            )
+
+        return recs_by_user
 
     def _to_user_item_coo(self, df: pd.DataFrame) -> coo_matrix:
         """Turn a dataframe with transactions into a COO sparse items x users matrix"""
