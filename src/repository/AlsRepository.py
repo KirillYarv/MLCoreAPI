@@ -98,7 +98,8 @@ class AlsRepository:
         with connection.cursor() as cursor:
             cursor.execute(query)
 
-            result = cursor.fetchone()[0]
+            fetched = cursor.fetchone()
+            result = fetched[0] if fetched is not None else 0
             end = perf_counter()
 
             logging.info(f"get_count took {end - start} seconds for {table_name}")
