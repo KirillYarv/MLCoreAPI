@@ -6,3 +6,6 @@ __pycache__
 *.json
 *.csv
 *.log
+*.png
+*.dot
+*.npz
