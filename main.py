@@ -1,4 +1,6 @@
 import logging
+from enum import unique
+from time import perf_counter
 from typing import Any, Dict
 
 from fastapi import FastAPI
@@ -49,6 +51,7 @@ def get_main():
                 "/api/pairs",
                 "/api/pairs/{product_name}",
                 "/api/als/recommendations/{user_id}",
+                "/api/als/refresh",
                 "/db/isconnect",
             ],
         },
@@ -59,17 +62,22 @@ def get_main():
 @app.get("/api/pairs")
 def get_pairs():
     logging.info("Catch /api/pairs")
+    start = perf_counter()
     pairs = miner.get_pairs()
+    end = perf_counter()
+    logging.info(f"get_pairs took {end - start} seconds")
+
     return get_response(
         status="success",
         data=pairs,
-        message="Association pairs fetched",
+        message=f"Association pairs fetched: unique_pairs={len(pairs)}",
     )
 
 
 @app.get("/api/pairs/{product_name}")
 def get_pairs_by_name(product_name: str):
     logging.info(f"Catch /api/pairs/{product_name}")
+    start = perf_counter()
 
     data = miner.get_pairs()
     filtered_data = []
@@ -79,6 +87,9 @@ def get_pairs_by_name(product_name: str):
             continue
         if product_name in pair[1]:
             filtered_data.append(pair[0])
+
+    end = perf_counter()
+    logging.info(f"get_pairs_by_name took {end - start} seconds")
 
     return get_response(
         status="success",
@@ -99,6 +110,8 @@ def get_als_recommendations(user_id: str, top_k: int = 12):
         Dict[str, Any]: Unified API response with one user's recommendations.
     """
     logging.info("Catch /api/als/recommendations/%s", user_id)
+    start = perf_counter()
+
     try:
         recommendations = als_service.get_recommendations(top_k=top_k)
     except RuntimeError as error:
@@ -123,11 +136,41 @@ def get_als_recommendations(user_id: str, top_k: int = 12):
             data={"reason": "user_not_found", "user_id": user_id},
             message=f"Recommendations for user '{user_id}' were not found",
         )
-
+    end = perf_counter()
+    logging.info(f"get_als_recommendations_by_name took {end - start} seconds")
     return get_response(
         status="success",
         data=user_recommendations,
         message=f"ALS recommendations fetched for user '{user_id}'",
+    )
+
+
+@app.post("/api/als/refresh")
+def refresh_als_recommendations(top_k: int = 12):
+    """Force refresh of ALS model artifacts and recommendations.
+
+    Args:
+        top_k: Number of recommended products per user.
+
+    Returns:
+        Dict[str, Any]: Unified API response with refreshed recommendation payload.
+    """
+    logging.info("Catch /api/als/refresh")
+    start = perf_counter()
+    try:
+        recommendations = als_service.refresh_recommendations(top_k=top_k)
+    except RuntimeError as error:
+        return get_response(
+            status="error",
+            data={"reason": "gpu_unavailable"},
+            message=str(error),
+        )
+    end = perf_counter()
+    logging.info(f"refresh_als_recommendations took {end - start} seconds")
+    return get_response(
+        status="success",
+        data={"users_count": len(recommendations), "top_k": top_k},
+        message="ALS recommendations were refreshed",
     )
 
 
@@ -147,6 +190,7 @@ def get_transactions():
 @app.get("/db/isconnect")
 def is_connect():
     logging.info("Catch /db/isconnect")
+    start = perf_counter()
     db_status = db_connection_service.check_connection()
 
     if not db_status["is_connected"]:
@@ -155,6 +199,8 @@ def is_connect():
             data=db_status,
             message="Database is not connected",
         )
+    end = perf_counter()
+    logging.info(f"is_connect took {end - start} seconds")
     return get_response(
         status="success",
         data=db_status,
