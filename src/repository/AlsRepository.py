@@ -7,7 +7,7 @@ from uuid import uuid4
 import psycopg2
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     filename="py_log.log",
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
