@@ -10,17 +10,22 @@ from src.repository.ArlRepository import ArlRepository
 from src.repository.DbInfoRepository import DbInfoRepository
 from src.service.ALS import AlternatingLeastSquaresService
 from src.service.ARL import AssociationRulesMiner
+from src.service.CacheService import JsonFileCacheService
 from src.service.DbConnectionService import DbConnectionService
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     filename="py_log.log",
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
-miner = AssociationRulesMiner(arl_repo=ArlRepository())
-als_service = AlternatingLeastSquaresService(als_repo=AlsRepository())
+cache_service = JsonFileCacheService()
+miner = AssociationRulesMiner(arl_repo=ArlRepository(), cache_service=cache_service)
+als_service = AlternatingLeastSquaresService(
+    als_repo=AlsRepository(),
+    cache_service=cache_service,
+)
 db_connection_service = DbConnectionService(db_info_repo=DbInfoRepository())
 
 app = FastAPI()
@@ -158,7 +163,7 @@ def refresh_als_recommendations(top_k: int = 12):
     logging.info("Catch /api/als/refresh")
     start = perf_counter()
     try:
-        recommendations = als_service.refresh_recommendations(top_k=top_k)
+        recommendation_count = als_service.refresh_recommendations(top_k=top_k)
     except RuntimeError as error:
         return get_response(
             status="error",
@@ -169,7 +174,7 @@ def refresh_als_recommendations(top_k: int = 12):
     logging.info(f"refresh_als_recommendations took {end - start} seconds")
     return get_response(
         status="success",
-        data={"users_count": len(recommendations), "top_k": top_k},
+        data={"users_count": recommendation_count, "top_k": top_k},
         message="ALS recommendations were refreshed",
     )
 

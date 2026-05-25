@@ -12,9 +12,10 @@ from implicit.gpu.als import AlternatingLeastSquares
 from scipy.sparse import coo_matrix, csr_matrix, load_npz, save_npz
 
 from src.repository.AlsRepository import AlsRepository
+from src.service.CacheService import CacheServiceInterface
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     filename="py_log.log",
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
@@ -27,6 +28,7 @@ class AlternatingLeastSquaresService:
     def __init__(
         self,
         als_repo: AlsRepository,
+        cache_service: CacheServiceInterface,
         cache_dir: str = "",
         cache_prefix: str = "data_for_als",
         factors: int = 200,
@@ -48,6 +50,7 @@ class AlternatingLeastSquaresService:
             use_gpu: Enable GPU backend for ALS training.
         """
         self.als_repo = als_repo
+        self.cache_service = cache_service
         self.cache_dir = cache_dir
         self.cache_prefix = cache_prefix
         self.factors = factors
@@ -55,11 +58,11 @@ class AlternatingLeastSquaresService:
         self.iterations = iterations
         self.pool_processes = pool_processes
         self.use_gpu = use_gpu
-        self._cached_recommendations: List[Dict[str, Any]] = []
-        self._cached_top_k: int | None = None
         self._last_map_at_k: float | None = None
         self._last_ndcg_at_k: float | None = None
         self._last_precision_at_k: float | None = None
+        self._cached_recommendations: List[Dict[str, Any]] = []
+        self._cached_top_k: int | None = None
 
         self.all_users_count: int = self.als_repo.get_count("customers", "customer_id")
         self.all_items_count: int = self.als_repo.get_count("articles", "article_id")
@@ -73,9 +76,6 @@ class AlternatingLeastSquaresService:
         Returns:
             List[Dict[str, Any]]: Recommendation records.
         """
-        if self._cached_recommendations and self._cached_top_k == top_k:
-            return self._cached_recommendations
-
         cache_paths = list(
             glob.glob(f"{self.cache_dir}{self.cache_prefix}_results*.json")
         )
@@ -83,7 +83,7 @@ class AlternatingLeastSquaresService:
         self._cached_top_k = top_k
         return self._cached_recommendations
 
-    def refresh_recommendations(self, top_k: int = 12) -> List[Dict[str, Any]]:
+    def refresh_recommendations(self, top_k: int = 12) -> int:
         """Force recomputation of ALS recommendations.
 
         This method clears in-memory and file artifacts to rebuild the full
@@ -93,7 +93,7 @@ class AlternatingLeastSquaresService:
             top_k: Number of recommended items per user.
 
         Returns:
-            List[Dict[str, Any]]: Recomputed recommendation records.
+            int: Number of recomputed recommendation records.
         """
         self._cached_recommendations = []
         self._cached_top_k = None
@@ -114,23 +114,21 @@ class AlternatingLeastSquaresService:
             if path.exists():
                 path.unlink()
 
-        recommendations = self._calculate_recommendations(top_k=top_k)
-        self._cached_recommendations = recommendations
-        self._cached_top_k = top_k
-        return recommendations
+        return len(self._calculate_recommendations(top_k=top_k))
 
     def _load_or_calculate(
         self, cache_paths: List[str], top_k: int
     ) -> List[Dict[str, Any]]:
+        cached = self.cache_service.load_many(cache_paths)
+        if cached:
+            return cached
+
         if self._has_model_artifacts():
             logging.info(
                 "ALS artifacts found. Loading model and generating recommendations."
             )
             return self._generate_recommendations_from_artifacts(top_k=top_k)
 
-        cached = self._load_cached_data(cache_paths)
-        if cached:
-            return cached
         return self._calculate_recommendations(top_k=top_k)
 
     def _artifact_paths(self) -> Dict[str, Path]:
@@ -198,19 +196,6 @@ class AlternatingLeastSquaresService:
             top_k=top_k,
         )
 
-    def _load_cached_data(self, cache_paths: List[str]) -> List[Dict[str, Any]]:
-        data: List[Dict[str, Any]] = []
-        for cache_path in cache_paths:
-            path = Path(cache_path)
-            if not path.exists():
-                continue
-            try:
-                with open(path, "r", encoding="utf-8") as file:
-                    data.extend(json.load(file))
-            except json.JSONDecodeError:
-                continue
-        return data
-
     def _get_repository_data(self, transactions_postfix: str) -> None:
         """Load interactions for one partition and persist them to cache.
 
@@ -218,7 +203,21 @@ class AlternatingLeastSquaresService:
             transactions_postfix: Transactions table postfix, e.g. ``_2019_03``.
         """
         data = self.als_repo.get_user_item_interactions(transactions_postfix)
-        self._save_to_cache(data, f"{self.cache_prefix}{transactions_postfix}.json")
+
+        logging.info("Make dataframe")
+
+        chunk_df = pd.DataFrame(
+            data,
+            columns=["t_dat", "customer_id", "article_id"],
+        )
+
+        del data
+
+        chunk_df["t_dat"] = pd.to_datetime(chunk_df["t_dat"])
+
+        logging.debug("chunk_df%s shape: %s", transactions_postfix, chunk_df.shape)
+
+        return chunk_df
 
     def _calculate_recommendations(self, top_k: int) -> List[Dict[str, Any]]:
         """Fetch interactions in parallel, then train ALS in one synchronized flow.
@@ -239,22 +238,36 @@ class AlternatingLeastSquaresService:
             "_2020_03",
             "_2020_05",
         ]
+        interactions_df = pd.DataFrame(columns=["t_dat", "customer_id", "article_id"])
+        interactions_df["t_dat"] = pd.to_datetime(interactions_df["t_dat"])
 
         with Pool(processes=self.pool_processes) as pool:
             fetch_start = perf_counter()
-            pool.map(self._get_repository_data, table_postfixes)
+            result = pool.imap(self._get_repository_data, table_postfixes)
+
+            for chunk_df in result:
+                logging.debug("Appending chunk_df to interactions_df")
+                interactions_df = pd.concat([interactions_df, chunk_df])
+
             fetch_end = perf_counter()
+            del result
             logging.info(
                 "ALS data fetch multiprocessing completed in %.3f sec",
                 fetch_end - fetch_start,
             )
 
-        interactions_df = self._build_interactions_dataframe_from_cache(table_postfixes)
         if interactions_df.empty:
-            self._save_to_cache([], f"{self.cache_prefix}_results.json")
+            self.cache_service.save(
+                [],
+                f"{self.cache_dir}{self.cache_prefix}_results.json",
+            )
             return []
 
-        logging.info(f"built interactions_df shape: {interactions_df.shape}")
+        logging.info("Sorting interactions_df by t_dat")
+        interactions_df = interactions_df.sort_values(by="t_dat")
+        logging.debug("First element after sorting: %s", interactions_df.iloc[0])
+
+        logging.debug(f"interactions_df shape: {interactions_df.shape}")
 
         interactions_df = self._filter_data(
             interactions_df, user_count=10, item_count=20
@@ -262,54 +275,12 @@ class AlternatingLeastSquaresService:
         logging.info(f"filtered interactions_df shape: {interactions_df.shape}")
 
         recs = self._train_single_model(interactions_df=interactions_df, top_k=top_k)
-        self._save_to_cache(recs, f"{self.cache_prefix}_results_all.json")
+        self.cache_service.save(
+            recs,
+            f"{self.cache_dir}{self.cache_prefix}_results_all.json",
+        )
 
         return recs
-
-    def _build_interactions_dataframe_from_cache(
-        self,
-        table_postfixes: List[str],
-    ) -> pd.DataFrame:
-        """Read cached partition files and build a single interactions DataFrame.
-
-        Args:
-            table_postfixes: List of table postfixes that define cache filenames.
-
-        Returns:
-            pd.DataFrame: Unified DataFrame with columns
-                ``t_dat``, ``customer_id``, ``article_id``.
-        """
-        unified_df = pd.DataFrame(columns=["t_dat", "customer_id", "article_id"])
-        unified_df["t_dat"] = pd.to_datetime(unified_df["t_dat"])
-
-        for postfix in table_postfixes:
-            path = Path(f"{self.cache_dir}{self.cache_prefix}{postfix}.json")
-            if not path.exists():
-                continue
-            try:
-                logging.info(f"reading cache file: {path}")
-                with open(path, "r", encoding="utf-8") as file:
-                    rows = json.load(file)
-            except json.JSONDecodeError:
-                continue
-
-            logging.info("make dataframe")
-
-            chunk_df = pd.DataFrame(
-                rows,
-                columns=["t_dat", "customer_id", "article_id"],
-            )
-            logging.info("change type dataframe")
-            chunk_df["t_dat"] = pd.to_datetime(chunk_df["t_dat"])
-
-            if chunk_df.empty:
-                continue
-
-            unified_df = pd.concat([unified_df, chunk_df], ignore_index=True)
-            logging.info(f"cache file {path} loaded")
-
-        logging.info("returning unified interactions_df shape: %s", unified_df.shape)
-        return unified_df
 
     def _filter_data(
         self, df: pd.DataFrame, user_count=10, item_count=20
@@ -344,7 +315,6 @@ class AlternatingLeastSquaresService:
             factors=self.factors,
             regularization=self.regularization,
             iterations=self.iterations,
-            use_gpu=self.use_gpu,
         )
 
         logging.info("codes interactions_df")
@@ -503,9 +473,3 @@ class AlternatingLeastSquaresService:
                 "GPU is required for ALS, but CUDA is not available. "
                 "Install NVIDIA driver + CUDA runtime and start container with '--gpus all'."
             )
-
-    def _save_to_cache(self, data: Any, file_name: str) -> None:
-        """Persist recommendation data to JSON cache file."""
-        path = Path(f"{self.cache_dir}{file_name}")
-        with open(path, "w", encoding="utf-8") as file:
-            json.dump(data, file, default=str)

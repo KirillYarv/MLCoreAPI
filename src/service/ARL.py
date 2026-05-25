@@ -1,17 +1,15 @@
 import glob
-import json
 import logging
-from ast import Tuple
 from multiprocessing import Pool
-from pathlib import Path
 from time import perf_counter
 
 from apyori import apriori
 
 from ..repository.ArlRepository import ArlRepository
+from .CacheService import CacheServiceInterface
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     filename="py_log.log",
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
@@ -22,10 +20,12 @@ class AssociationRulesMiner:
     def __init__(
         self,
         arl_repo: ArlRepository,
+        cache_service: CacheServiceInterface,
         cache_dir: str = "",
         cache_prefix: str = "data_for_arl",
     ):
         self.arl_repo = arl_repo
+        self.cache_service = cache_service
         self._pairs_arl = []
         self._cache_dir = cache_dir
         self._cache_prefix = cache_prefix
@@ -66,7 +66,7 @@ class AssociationRulesMiner:
         # 1. Попытка загрузить из кеша
 
         logging.info(f"Loading cached data from {data_paths}")
-        data = self._load_cached_data(data_paths)
+        data = self.cache_service.load_many(data_paths)
 
         # 2. Расчет, если кеш пуст или отсутствует
         if not data:
@@ -75,18 +75,6 @@ class AssociationRulesMiner:
 
         data = self._get_unique_products(data)
 
-        return data
-
-    def _load_cached_data(self, data_paths: list[str]) -> list:
-        data = []
-        for path in data_paths:
-            path = Path(path)
-            if path.exists():
-                try:
-                    with open(path, "r", encoding="utf-8") as f:
-                        data.extend(json.load(f))
-                except json.JSONDecodeError:
-                    pass
         return data
 
     def _get_results(self, transactions_postfix: str) -> tuple[float, float]:
@@ -128,7 +116,10 @@ class AssociationRulesMiner:
             )
 
         # Сохраняем результат в кеш
-        self._save_to_cache(pairs, f"{self._cache_prefix}{transactions_postfix}.json")
+        self.cache_service.save(
+            pairs,
+            f"{self._cache_dir}{self._cache_prefix}{transactions_postfix}.json",
+        )
 
         return time, apriori_time
 
@@ -147,7 +138,7 @@ class AssociationRulesMiner:
         with Pool(processes=10) as pool:
             start = perf_counter()
 
-            r = pool.map(self._get_results, transactions_postfixes)
+            r = pool.imap(self._get_results, transactions_postfixes)
             for result in r:
                 query_time += result[0]
                 apriori_time += result[1]
@@ -162,13 +153,7 @@ class AssociationRulesMiner:
         for i in transactions_postfixes:
             data_paths.append(f"{self._cache_dir}{self._cache_prefix}{i}.json")
 
-        return self._load_cached_data(data_paths)
-
-    def _save_to_cache(
-        self, data: list[tuple[str, str, float, float, float]], path_str: str
-    ):
-        with open(Path(path_str), "w", encoding="utf-8") as f:
-            json.dump(data, f)
+        return self.cache_service.load_many(data_paths)
 
     def _log_pairs_metrics(
         self, pairs: list[tuple[str, str, float, float, float]]
