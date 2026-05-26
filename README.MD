@@ -7,11 +7,8 @@
 git clone https://github.com/KirillYarv/MLCoreAPI.git
 cd MLCoreAPI
 ```
-Установите необходимые зависимости:
 
-```pip install -r requirements.txt```
-
-Убедитесь, что в корневой директории находится файл с данными Transactions.csv (разделитель ;).
+Дальнейший запуск выполняется через Docker Compose.
 
 ### Запуск приложения
 Запуск сервера разработки осуществляется с помощью uvicorn. Выполните следующую команду в терминале:
@@ -24,30 +21,34 @@ cd MLCoreAPI
 
 После запуска сервер будет доступен по адресу: http://127.0.0.1:8000
 
-### Запуск через Docker
-Соберите Docker-образ из корня проекта:
+### Запуск через Docker Compose
+Запустите сервисы из корня проекта:
 
 ```bash
-docker build -t mlcoreapi .
+docker compose up --build
 ```
 
-Для ALS на GPU требуется запуск с доступом к GPU:
+Для запуска в фоне:
 
 ```bash
-docker run --rm --gpus all -p 8001:8001 mlcoreapi
+docker compose up --build -d
 ```
 
-Если GPU не нужен, можно запускать без `--gpus all`.
+Остановка сервисов:
+
+```bash
+docker compose down
+```
 
 ### Требования для GPU (ALS)
 - На хосте должен быть установлен NVIDIA Driver с поддержкой CUDA 12.2.
 - Рекомендуемый минимум: драйвер ветки 535+ (например, 536.25 и выше).
-- Для Docker нужен NVIDIA Container Toolkit.
+- Для Docker нужен NVIDIA Container Toolkit (для `docker compose` с GPU).
 
 Проверка доступности GPU внутри контейнера:
 
 ```bash
-docker run --rm --gpus all mlcoreapi python3 -c "from implicit import gpu; print(gpu.HAS_CUDA)"
+docker compose run --rm python_app python3 -c "from implicit import gpu; print(gpu.HAS_CUDA)"
 ```
 
 После запуска API будет доступно по адресу: http://127.0.0.1:8001
