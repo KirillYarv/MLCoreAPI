@@ -30,7 +30,7 @@ class AssociationRulesMiner:
         self._cache_dir = cache_dir
         self._cache_prefix = cache_prefix
 
-    def get_pairs(self) -> list:
+    def get_pairs(self) -> list[tuple[str, str, float, float, float]]:
         """public method for getting pairs."""
         data_paths = list(glob.glob(f"{self._cache_dir}{self._cache_prefix}*.json"))
         logging.info("Getting pairs from cache")
@@ -62,7 +62,9 @@ class AssociationRulesMiner:
 
         return unique_pairs
 
-    def _load_or_calculate(self, data_paths: list[str]) -> list:
+    def _load_or_calculate(
+        self, data_paths: list[str]
+    ) -> list[tuple[str, str, float, float, float]]:
         # 1. Попытка загрузить из кеша
 
         logging.info(f"Loading cached data from {data_paths}")
@@ -78,7 +80,7 @@ class AssociationRulesMiner:
         return data
 
     def _get_results(self, transactions_postfix: str) -> tuple[float, float]:
-        print(transactions_postfix)
+        common_start = perf_counter()
         # получение транзакций из одной партицы
         transactions, time = self.arl_repo.get_transactions(transactions_postfix)
 
@@ -105,15 +107,25 @@ class AssociationRulesMiner:
         # Извлекаем только списки товаров из объектов RelationRecord
         pairs: list[tuple[str, str, float, float, float]] = []
         for rule in rules_list:
+            items = tuple(rule.items)
+            if len(items) < 2:
+                continue
+
             pairs.append(
                 (
-                    str(rule.items[0]),
-                    str(rule.items[1]),
+                    str(items[0]),
+                    str(items[1]),
                     float(rule.support),
                     max(float(stat.confidence) for stat in rule.ordered_statistics),
                     max(float(stat.lift) for stat in rule.ordered_statistics),
                 )
             )
+
+        common_end = perf_counter()
+
+        logging.info(
+            f"Common time for {transactions_postfix}: {common_end - common_start} seconds"
+        )
 
         # Сохраняем результат в кеш
         self.cache_service.save(
@@ -123,7 +135,7 @@ class AssociationRulesMiner:
 
         return time, apriori_time
 
-    def _calculate_rules(self) -> list:
+    def _calculate_rules(self) -> list[tuple[str, str, float, float, float]]:
         query_time = 0
         apriori_time = 0
         transactions_postfixes = [
@@ -135,7 +147,7 @@ class AssociationRulesMiner:
             "_2020_03",
             "_2020_05",
         ]
-        with Pool(processes=10) as pool:
+        with Pool(processes=5) as pool:
             start = perf_counter()
 
             r = pool.imap(self._get_results, transactions_postfixes)

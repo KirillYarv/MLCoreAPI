@@ -1,7 +1,6 @@
 import logging
 import os
 from time import perf_counter
-from typing import List, Tuple
 from uuid import uuid4
 
 import psycopg2
@@ -30,7 +29,9 @@ class ArlRepository:
         self.host = host
         self.port = port
 
-    def get_transactions(self, transactions_postfix: str, limit: int = -1):
+    def get_transactions(
+        self, transactions_postfix: str, limit: int = -1
+    ) -> tuple[list[str], float]:
         connection = psycopg2.connect(
             database=self.database,
             user=self.user,
@@ -46,10 +47,8 @@ class ArlRepository:
         query: str = f"select \
                    	    t_dat, \
                         customer_id, \
-                        string_agg(prod_name, '$$ ') \
-                    from transactions{transactions_postfix} t \
-                    left join articles a \
-                        on a.article_id = t.article_id \
+                        string_agg(cast(article_id as text), '$$ ') \
+                    from transactions{transactions_postfix} \
                     group by t_dat, customer_id{limit_str}"
 
         cursor_name = f"arl_stream_{transactions_postfix.strip('_')}_{uuid4()}"
@@ -59,22 +58,22 @@ class ArlRepository:
             start = perf_counter()
 
             cursor.execute(query)
-            transactions: List[Tuple[str, str, str]] = []
+            transactions: list[tuple[str, str, str]] = []
             while True:
                 rows = cursor.fetchmany(20_000)
                 if not rows:
                     break
                 transactions.extend(rows)
 
-            prod_names = []
+            prod_ids = []
 
             for t in transactions:
                 if len(t[2].split("$$ ")) > 1:
-                    prod_names.append(t[2].split("$$ "))
+                    prod_ids.append(t[2].split("$$ "))
 
             end = perf_counter()
             logging.info(
                 f"get_transactions{transactions_postfix} took {end - start} seconds"
             )
 
-            return prod_names, end - start
+            return prod_ids, end - start
