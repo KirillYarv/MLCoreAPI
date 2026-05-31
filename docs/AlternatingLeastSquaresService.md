@@ -14,16 +14,13 @@
 | `use_gpu` | `bool` | public | Флаг обязательного использования GPU backend. |
 | `_cached_recommendations` | `list[dict[str, Any]]` | private | In-memory кеш рассчитанных рекомендаций. |
 | `_cached_top_k` | `int \| None` | private | Значение `top_k`, соответствующее in-memory кешу рекомендаций. |
-| `_last_map_at_k` | `float \| None` | private | Последнее значение MAP@K после обучения. |
-| `_last_ndcg_at_k` | `float \| None` | private | Последнее значение NDCG@K после обучения. |
-| `_last_precision_at_k` | `float \| None` | private | Последнее значение Precision@K после обучения. |
 | `all_users_count` | `int` | public | Число уникальных пользователей (размерность матрицы по строкам). |
 | `all_items_count` | `int` | public | Число уникальных товаров (размерность матрицы по столбцам). |
 
 ## Методы класса
 | Принадлежность классу | Название | Аргументы | Видимость | Тип возвращаемого результата | Комментарии |
 |---|---|---|---|---|---|
-| `AlternatingLeastSquaresService` | `__init__` | `als_repo: AlsRepository`, `cache_service: CacheServiceInterface`, `cache_dir: str = ''`, `cache_prefix: str = 'data_for_als'`, `factors: int = 200`, `regularization: float = 0.01`, `iterations: int = 3`, `pool_processes: int = 3`, `use_gpu: bool = True` | public | `None` | Инициализирует параметры ALS, кеш и размеры матрицы на основе БД. |
+| `AlternatingLeastSquaresService` | `__init__` | `als_repo: AlsRepository`, `cache_service: CacheServiceInterface`, `cache_dir: str = ''`, `cache_prefix: str = 'data_for_als'`, `factors: int = 20`, `regularization: float = 0.01`, `iterations: int = 20`, `pool_processes: int = 3`, `use_gpu: bool = True` | public | `None` | Инициализирует параметры ALS, кеш и размеры матрицы на основе БД. |
 | `AlternatingLeastSquaresService` | `get_recommendations` | `top_k: int = 12` | public | `list[dict[str, Any]]` | Возвращает рекомендации из кеша или запускает полный pipeline расчета. |
 | `AlternatingLeastSquaresService` | `refresh_recommendations` | `top_k: int = 12` | public | `int` | Принудительно удаляет артефакты/кеш и пересчитывает модель и рекомендации заново; возвращает количество записей. |
 | `AlternatingLeastSquaresService` | `_load_or_calculate` | `cache_paths: list[str]`, `top_k: int` | private | `list[dict[str, Any]]` | Загружает кеш рекомендаций или запускает пересчет. |

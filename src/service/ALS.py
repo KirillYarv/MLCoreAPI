@@ -31,9 +31,9 @@ class AlternatingLeastSquaresService:
         cache_service: CacheServiceInterface,
         cache_dir: str = "",
         cache_prefix: str = "data_for_als",
-        factors: int = 200,
+        factors: int = 20,
         regularization: float = 0.01,
-        iterations: int = 3,
+        iterations: int = 20,
         pool_processes: int = 3,
         use_gpu: bool = True,
     ) -> None:
@@ -58,9 +58,6 @@ class AlternatingLeastSquaresService:
         self.iterations = iterations
         self.pool_processes = pool_processes
         self.use_gpu = use_gpu
-        self._last_map_at_k: float | None = None
-        self._last_ndcg_at_k: float | None = None
-        self._last_precision_at_k: float | None = None
         self._cached_recommendations: List[Dict[str, Any]] = []
         self._cached_top_k: int | None = None
 
@@ -101,10 +98,6 @@ class AlternatingLeastSquaresService:
         for artifact_path in self._artifact_paths().values():
             if artifact_path.exists():
                 artifact_path.unlink()
-
-        self._last_map_at_k = None
-        self._last_ndcg_at_k = None
-        self._last_precision_at_k = None
 
         cache_paths = list(
             glob.glob(f"{self.cache_dir}{self.cache_prefix}_results*.json")
