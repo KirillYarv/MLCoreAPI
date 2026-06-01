@@ -54,7 +54,7 @@ def get_main():
             "service": "Market Basket Analysis API",
             "routes": [
                 "/api/pairs",
-                "/api/pairs/{product_name}",
+                "/api/pairs/{product_id}",
                 "/api/als/recommendations/{user_id}",
                 "/api/als/refresh",
                 "/db/isconnect",
@@ -79,27 +79,27 @@ def get_pairs():
     )
 
 
-@app.get("/api/pairs/{product_name}")
-def get_pairs_by_name(product_name: str):
-    logging.info(f"Catch /api/pairs/{product_name}")
+@app.get("/api/pairs/{product_id}")
+def get_pairs_by_id(product_id: str):
+    logging.info(f"Catch /api/pairs/{product_id}")
     start = perf_counter()
 
     data = miner.get_pairs()
     filtered_data = []
     for pair in data:
-        if product_name in pair[0]:
+        if product_id in pair[0]:
             filtered_data.append(pair[1])
             continue
-        if product_name in pair[1]:
+        if product_id in pair[1]:
             filtered_data.append(pair[0])
 
     end = perf_counter()
-    logging.info(f"get_pairs_by_name took {end - start} seconds")
+    logging.info(f"get_pairs_by_id took {end - start} seconds")
 
     return get_response(
         status="success",
         data=list(set(filtered_data)),
-        message=f"Related products fetched for '{product_name}'",
+        message=f"Related products fetched for '{product_id}'",
     )
 
 
