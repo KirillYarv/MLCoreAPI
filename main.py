@@ -126,16 +126,12 @@ def get_als_recommendations(user_id: str, top_k: int = 12):
             message=str(error),
         )
 
-    user_recommendations = next(
-        (
-            recommendation
-            for recommendation in recommendations
-            if str(recommendation.get("customer_id")) == str(user_id)
-        ),
-        None,
-    )
+    user_recommendations = []
+    for recommendation in recommendations:
+        if str(recommendation.get("customer_id")) == str(user_id):
+            user_recommendations.append(recommendation)
 
-    if user_recommendations is None:
+    if not user_recommendations:
         return get_response(
             status="error",
             data={"reason": "user_not_found", "user_id": user_id},
