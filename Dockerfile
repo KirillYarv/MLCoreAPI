@@ -2,12 +2,6 @@ FROM nvidia/cuda:12.2.2-devel-ubuntu22.04
 
 WORKDIR /app
 
-ENV CUDA_HOME=/usr/local/cuda
-ENV PATH="${CUDA_HOME}/bin:${PATH}"
-ENV LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}"
-ENV PYTHONUNBUFFERED=1
-ENV CMAKE_ARGS="-DCMAKE_CUDA_ARCHITECTURES=86"
-
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         python3 \
