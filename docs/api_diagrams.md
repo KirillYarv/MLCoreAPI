@@ -6,17 +6,16 @@
 flowchart TD
     A[Client] --> B[GET /]
     A --> C[GET /api/pairs]
-    A --> D[GET /api/pairs/{product_name}]
+    A --> D[GET /api/pairs/{product_id}]
     A --> E[GET /api/als/recommendations/{user_id}?top_k=12]
     A --> F[POST /api/als/refresh?top_k=12]
-    A --> G[GET /db/transactions_2018_09]
-    A --> H[GET /db/isconnect]
+    A --> G[GET /db/isconnect]
 
     C -. read transactions .-> P[(Postgres)]
+    D -. read transactions .-> P
     E -. read interactions on cache miss .-> P
     F -. force full rebuild from DB .-> P
     G --> P
-    H --> P
 ```
 
 ## 2) Sequence: /api/pairs
@@ -25,21 +24,26 @@ flowchart TD
 sequenceDiagram
     participant Client
     participant API as FastAPI main.py
+    participant REDIS as RedisCacheService
     participant ARL as AssociationRulesMiner
-    participant CACHE as JsonFileCacheService
+    participant FILE as JsonFileCacheService
     participant REPO as ArlRepository
     participant PG as Postgres DB
 
     Client->>API: GET /api/pairs
-    API->>ARL: get_pairs()
+    API->>REDIS: load(pairs_result)
 
-    alt In-memory cache exists
-        ARL-->>API: pairs
-    else No in-memory cache
-        ARL->>CACHE: load_many(cache_paths)
-        alt File cache exists
-            ARL-->>API: pairs from file cache
-        else No file cache
+    alt Redis cache exists
+        REDIS-->>API: cached pairs
+    else Redis cache miss
+        API->>ARL: get_pairs()
+        alt In-memory cache exists
+            ARL-->>API: pairs
+        else No in-memory cache
+            ARL->>FILE: load_many(cache_paths)
+            alt File cache exists
+                ARL-->>API: pairs from file cache
+            else No file cache
             ARL->>ARL: multiprocessing Pool over partitions
             loop each partition
                 ARL->>REPO: get_transactions(postfix)
@@ -47,15 +51,16 @@ sequenceDiagram
                 PG-->>REPO: rows
                 REPO-->>ARL: transactions
                 ARL->>ARL: run apriori
-                ARL->>CACHE: save(partition_pairs_with_metrics)
+                ARL->>FILE: save(partition_pairs_with_metrics)
             end
-            ARL->>CACHE: load_many(cache_paths)
+            ARL->>FILE: load_many(cache_paths)
             ARL->>ARL: deduplicate pairs (A,B)==(B,A)
             ARL-->>API: pairs
+            end
         end
+        API->>REDIS: save(pairs_result)
     end
 
-    API->>API: final unique normalization
     API-->>Client: status/message/data(unique pairs)
 ```
 
@@ -65,21 +70,18 @@ sequenceDiagram
 sequenceDiagram
     participant Client
     participant API as FastAPI main.py
+    participant REDIS as RedisCacheService
     participant ALS as AlternatingLeastSquaresService
-    participant CACHE as JsonFileCacheService
     participant REPO as AlsRepository
     participant PG as Postgres DB
 
     Client->>API: GET /api/als/recommendations/{user_id}?top_k
-    API->>ALS: get_recommendations(top_k)
+    API->>REDIS: load(als_user_id)
 
-    alt In-memory cache for same top_k exists
-        ALS-->>API: recommendations
-    else Cache miss
-        ALS->>CACHE: load_many(result_cache_paths)
-        alt Result cache exists
-            ALS-->>API: recommendations
-        else Result cache missing
+    alt Redis user cache exists
+        REDIS-->>API: cached user recommendations
+    else Redis user cache miss
+        API->>ALS: get_recommendations(top_k)
         ALS->>ALS: check model artifacts (model/mappings/user_items)
         alt Artifacts exist
             ALS->>ALS: load artifacts
@@ -100,18 +102,17 @@ sequenceDiagram
                     ALS->>ALS: convert rows to DataFrame chunk
                 end
                 ALS->>ALS: build unified DataFrame
-                ALS->>ALS: train ALS model + metrics
+                ALS->>ALS: train ALS model
                 ALS->>ALS: save artifacts
                 ALS->>ALS: generate recommendations
-                ALS->>CACHE: save(result_cache)
                 ALS-->>API: recommendations
             end
-        end
         end
     end
 
     API->>API: find target user_id in recommendations
     alt user found
+        API->>REDIS: save(als_user_id)
         API-->>Client: success + user recommendations
     else user not found
         API-->>Client: error (user_not_found)
@@ -128,9 +129,7 @@ sequenceDiagram
 
     Client->>API: POST /api/als/refresh?top_k
     API->>ALS: refresh_recommendations(top_k)
-    ALS->>ALS: clear in-memory cache
     ALS->>ALS: delete model artifacts
-    ALS->>ALS: delete result cache files
     ALS->>ALS: recompute full pipeline
     ALS-->>API: refreshed users_count
     API-->>Client: success + users_count
