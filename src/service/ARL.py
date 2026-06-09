@@ -88,7 +88,7 @@ class AssociationRulesMiner:
         start = perf_counter()
         rules = apriori(
             transactions=transactions,
-            min_support=0.0004,
+            min_support=0.000363,
             min_confidence=0.02,
             min_lift=3,
             min_length=2,
@@ -129,8 +129,7 @@ class AssociationRulesMiner:
 
         # Сохраняем результат в кеш
         self.cache_service.save(
-            pairs,
-            f"{self._cache_dir}{self._cache_prefix}{transactions_postfix}.json",
+            pairs, f"{self._cache_prefix}{transactions_postfix}.json"
         )
 
         return time, apriori_time
@@ -147,7 +146,7 @@ class AssociationRulesMiner:
             "_2020_03",
             "_2020_05",
         ]
-        with Pool(processes=5) as pool:
+        with Pool(processes=3) as pool:
             start = perf_counter()
 
             r = pool.imap(self._get_results, transactions_postfixes)

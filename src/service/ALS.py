@@ -28,8 +28,6 @@ class AlternatingLeastSquaresService:
     def __init__(
         self,
         als_repo: AlsRepository,
-        cache_service: CacheServiceInterface,
-        cache_dir: str = "",
         cache_prefix: str = "data_for_als",
         factors: int = 20,
         regularization: float = 0.01,
@@ -41,7 +39,6 @@ class AlternatingLeastSquaresService:
 
         Args:
             als_repo: Repository for reading interaction data.
-            cache_dir: Relative/absolute directory for JSON cache files.
             cache_prefix: Prefix for cache file names.
             factors: Number of latent factors in ALS model.
             regularization: L2 regularization coefficient.
@@ -50,35 +47,15 @@ class AlternatingLeastSquaresService:
             use_gpu: Enable GPU backend for ALS training.
         """
         self.als_repo = als_repo
-        self.cache_service = cache_service
-        self.cache_dir = cache_dir
         self.cache_prefix = cache_prefix
         self.factors = factors
         self.regularization = regularization
         self.iterations = iterations
         self.pool_processes = pool_processes
         self.use_gpu = use_gpu
-        self._cached_recommendations: List[Dict[str, Any]] = []
-        self._cached_top_k: int | None = None
 
         self.all_users_count: int = self.als_repo.get_count("customers", "customer_id")
         self.all_items_count: int = self.als_repo.get_count("articles", "article_id")
-
-    def get_recommendations(self, top_k: int = 12) -> List[Dict[str, Any]]:
-        """Return recommendations, using cache files when available.
-
-        Args:
-            top_k: Number of recommended items per user.
-
-        Returns:
-            List[Dict[str, Any]]: Recommendation records.
-        """
-        cache_paths = list(
-            glob.glob(f"{self.cache_dir}{self.cache_prefix}_results*.json")
-        )
-        self._cached_recommendations = self._load_or_calculate(cache_paths, top_k)
-        self._cached_top_k = top_k
-        return self._cached_recommendations
 
     def refresh_recommendations(self, top_k: int = 12) -> int:
         """Force recomputation of ALS recommendations.
@@ -92,30 +69,22 @@ class AlternatingLeastSquaresService:
         Returns:
             int: Number of recomputed recommendation records.
         """
-        self._cached_recommendations = []
-        self._cached_top_k = None
 
         for artifact_path in self._artifact_paths().values():
             if artifact_path.exists():
                 artifact_path.unlink()
 
-        cache_paths = list(
-            glob.glob(f"{self.cache_dir}{self.cache_prefix}_results*.json")
-        )
-        for cache_path in cache_paths:
-            path = Path(cache_path)
-            if path.exists():
-                path.unlink()
-
         return len(self._calculate_recommendations(top_k=top_k))
 
-    def _load_or_calculate(
-        self, cache_paths: List[str], top_k: int
-    ) -> List[Dict[str, Any]]:
-        cached = self.cache_service.load_many(cache_paths)
-        if cached:
-            return cached
+    def get_recommendations(self, top_k: int) -> List[Dict[str, Any]]:
+        """Return recommendations, using cache files when available.
 
+        Args:
+            top_k: Number of recommended items per user.
+
+        Returns:
+            List[Dict[str, Any]]: Recommendation records.
+        """
         if self._has_model_artifacts():
             logging.info(
                 "ALS artifacts found. Loading model and generating recommendations."
@@ -127,9 +96,9 @@ class AlternatingLeastSquaresService:
     def _artifact_paths(self) -> Dict[str, Path]:
         """Return filesystem paths for persisted ALS artifacts."""
         return {
-            "model": Path(f"{self.cache_dir}{self.cache_prefix}_model.npz"),
-            "mappings": Path(f"{self.cache_dir}{self.cache_prefix}_mappings.json"),
-            "user_items": Path(f"{self.cache_dir}{self.cache_prefix}_user_items.npz"),
+            "model": Path(f"{self.cache_prefix}_model.npz"),
+            "mappings": Path(f"{self.cache_prefix}_mappings.json"),
+            "user_items": Path(f"{self.cache_prefix}_user_items.npz"),
         }
 
     def _has_model_artifacts(self) -> bool:
@@ -250,10 +219,6 @@ class AlternatingLeastSquaresService:
             )
 
         if interactions_df.empty:
-            self.cache_service.save(
-                [],
-                f"{self.cache_dir}{self.cache_prefix}_results.json",
-            )
             return []
 
         logging.info("Sorting interactions_df by t_dat")
@@ -268,10 +233,6 @@ class AlternatingLeastSquaresService:
         logging.info(f"filtered interactions_df shape: {interactions_df.shape}")
 
         recs = self._train_single_model(interactions_df=interactions_df, top_k=top_k)
-        self.cache_service.save(
-            recs,
-            f"{self.cache_dir}{self.cache_prefix}_results_all.json",
-        )
 
         return recs
 

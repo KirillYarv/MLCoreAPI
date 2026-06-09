@@ -1,5 +1,5 @@
+import json
 import logging
-from enum import unique
 from time import perf_counter
 from typing import Any, Dict
 
@@ -10,7 +10,7 @@ from src.repository.ArlRepository import ArlRepository
 from src.repository.DbInfoRepository import DbInfoRepository
 from src.service.ALS import AlternatingLeastSquaresService
 from src.service.ARL import AssociationRulesMiner
-from src.service.CacheService import JsonFileCacheService
+from src.service.CacheService import JsonFileCacheService, RedisCacheService
 from src.service.DbConnectionService import DbConnectionService
 
 logging.basicConfig(
@@ -20,11 +20,14 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
-cache_service = JsonFileCacheService()
-miner = AssociationRulesMiner(arl_repo=ArlRepository(), cache_service=cache_service)
+cache_service = RedisCacheService()
+json_cache_service = JsonFileCacheService()
+
+miner = AssociationRulesMiner(
+    arl_repo=ArlRepository(), cache_service=json_cache_service
+)
 als_service = AlternatingLeastSquaresService(
     als_repo=AlsRepository(),
-    cache_service=cache_service,
 )
 db_connection_service = DbConnectionService(db_info_repo=DbInfoRepository())
 
@@ -68,7 +71,19 @@ def get_main():
 def get_pairs():
     logging.info("Catch /api/pairs")
     start = perf_counter()
+    user_cache = cache_service.load("pairs_result")
+    if user_cache:
+        pairs = json.loads(user_cache)
+
+        return get_response(
+            status="success",
+            data=pairs,
+            message=f"Association pairs fetched: unique_pairs={len(pairs)}",
+        )
     pairs = miner.get_pairs()
+
+    cache_service.save(pairs, "pairs_result")
+
     end = perf_counter()
     logging.info(f"get_pairs took {end - start} seconds")
 
@@ -83,6 +98,14 @@ def get_pairs():
 def get_pairs_by_id(product_id: str):
     logging.info(f"Catch /api/pairs/{product_id}")
     start = perf_counter()
+    user_cache = cache_service.load(f"pairs_result_{product_id}")
+    if user_cache:
+        pairs = json.loads(user_cache)
+        return get_response(
+            status="success",
+            data=pairs,
+            message=f"Association pairs fetched: unique_pairs={len(pairs)}",
+        )
 
     data = miner.get_pairs()
     filtered_data = []
@@ -93,12 +116,15 @@ def get_pairs_by_id(product_id: str):
         if product_id in pair[1]:
             filtered_data.append(pair[0])
 
+    filtered_data = list(set(filtered_data))
+    cache_service.save(filtered_data, f"pairs_result_{product_id}")
+
     end = perf_counter()
     logging.info(f"get_pairs_by_id took {end - start} seconds")
 
     return get_response(
         status="success",
-        data=list(set(filtered_data)),
+        data=filtered_data,
         message=f"Related products fetched for '{product_id}'",
     )
 
@@ -116,6 +142,14 @@ def get_als_recommendations(user_id: str, top_k: int = 12):
     """
     logging.info("Catch /api/als/recommendations/%s", user_id)
     start = perf_counter()
+
+    user_cache = cache_service.load(f"als_{user_id}")
+    if user_cache:
+        return get_response(
+            status="success",
+            data=json.loads(user_cache),
+            message=f"ALS recommendations fetched for user '{user_id}'",
+        )
 
     try:
         recommendations = als_service.get_recommendations(top_k=top_k)
@@ -137,8 +171,12 @@ def get_als_recommendations(user_id: str, top_k: int = 12):
             data={"reason": "user_not_found", "user_id": user_id},
             message=f"Recommendations for user '{user_id}' were not found",
         )
+
+    cache_service.save(user_recommendations, f"als_{user_id}")
+
     end = perf_counter()
     logging.info(f"get_als_recommendations_by_name took {end - start} seconds")
+
     return get_response(
         status="success",
         data=user_recommendations,
@@ -172,19 +210,6 @@ def refresh_als_recommendations(top_k: int = 12):
         status="success",
         data={"users_count": recommendation_count, "top_k": top_k},
         message="ALS recommendations were refreshed",
-    )
-
-
-@app.get("/db/transactions_2018_09")
-def get_transactions():
-    logging.info("Catch /db/transactions")
-    get_transactions = ArlRepository()
-    transactions = get_transactions.get_transactions("_2018_09")
-
-    return get_response(
-        status="success",
-        data=transactions,
-        message="Transactions fetched from database partition _2018_09",
     )
 
 
