@@ -37,18 +37,13 @@ class AlsRepository:
     def get_user_item_interactions(
         self, transactions_postfix: str
     ) -> List[Tuple[str, str, int]]:
-        """Load aggregated implicit interactions from one transactions partition.
-
+        """
         Args:
             transactions_postfix: Suffix for partition table name, e.g. ``_2019_03``.
 
         Returns:
             List[Tuple[str, str, int]]: Sequence of
                 ``(t_dat, customer_id, article_id)`` rows.
-        """
-        """Load aggregated implicit interactions from one transactions partition.
-
-        Data is read in chunks to avoid large memory spikes while fetching.
         """
         query = f"""
             select

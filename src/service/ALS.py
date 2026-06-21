@@ -1,4 +1,3 @@
-import glob
 import json
 import logging
 from multiprocessing import Pool
@@ -12,7 +11,6 @@ from implicit.gpu.als import AlternatingLeastSquares
 from scipy.sparse import coo_matrix, csr_matrix, load_npz, save_npz
 
 from src.repository.AlsRepository import AlsRepository
-from src.service.CacheService import CacheServiceInterface
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -35,8 +33,7 @@ class AlternatingLeastSquaresService:
         pool_processes: int = 3,
         use_gpu: bool = True,
     ) -> None:
-        """Initialize ALS service with repository, cache and model hyperparameters.
-
+        """
         Args:
             als_repo: Repository for reading interaction data.
             cache_prefix: Prefix for cache file names.
@@ -58,11 +55,7 @@ class AlternatingLeastSquaresService:
         self.all_items_count: int = self.als_repo.get_count("articles", "article_id")
 
     def refresh_recommendations(self, top_k: int = 12) -> int:
-        """Force recomputation of ALS recommendations.
-
-        This method clears in-memory and file artifacts to rebuild the full
-        pipeline from database partitions.
-
+        """
         Args:
             top_k: Number of recommended items per user.
 
@@ -77,8 +70,7 @@ class AlternatingLeastSquaresService:
         return len(self._calculate_recommendations(top_k=top_k))
 
     def get_recommendations(self, top_k: int) -> List[Dict[str, Any]]:
-        """Return recommendations, using cache files when available.
-
+        """
         Args:
             top_k: Number of recommended items per user.
 
@@ -182,17 +174,6 @@ class AlternatingLeastSquaresService:
         return chunk_df
 
     def _calculate_recommendations(self, top_k: int) -> List[Dict[str, Any]]:
-        """Fetch interactions in parallel, then train ALS in one synchronized flow.
-
-        Data loading is parallelized per partition with multiprocessing.
-        Model training and recommendation generation are executed in a single process.
-
-        Args:
-            top_k: Number of recommendations per user.
-
-        Returns:
-            List[Dict[str, Any]]: Final recommendation payload.
-        """
         self._validate_gpu_configuration()
 
         table_postfixes = [
@@ -405,8 +386,7 @@ class AlternatingLeastSquaresService:
         return train, test
 
     def _validate_gpu_configuration(self) -> None:
-        """Validate that GPU backend is available when GPU mode is enabled.
-
+        """
         Raises:
             RuntimeError: If GPU mode is requested but CUDA backend is unavailable.
         """
