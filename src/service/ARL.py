@@ -44,21 +44,21 @@ class AssociationRulesMiner:
         self, pairs: list[tuple[str, str, float, float, float]]
     ) -> list[tuple[str, str, float, float, float]]:
         """get unique products from pairs."""
-        unique_pairs_map = {}
+        unique_pairs_map: dict[tuple[str, str], tuple[str, str, float, float, float]] = {}
 
         for pair in pairs:
             if len(pair) != 5:
                 continue
-            pair_key = tuple(sorted([str(pair[0]), str(pair[1])]))
+            pair_key: tuple[str, str] = tuple([str(pair[0]), str(pair[1])])
             if pair_key not in unique_pairs_map:
-                unique_pairs_map[pair_key] = [
+                unique_pairs_map[pair_key] = (
                     pair_key[0],
                     pair_key[1],
                     pair[2],
                     pair[3],
                     pair[4],
-                ]
-        unique_pairs = list(unique_pairs_map.values())
+                )
+        unique_pairs: list[tuple[str, str, float, float, float]] = list(unique_pairs_map.values())
 
         return unique_pairs
 
@@ -160,7 +160,7 @@ class AssociationRulesMiner:
         logging.info(f"apriopi multythread took {apriori_time} seconds")
         logging.info(f"Total time: {end - start} seconds")
 
-        data_paths = []
+        data_paths: list[str] = []
         for i in transactions_postfixes:
             data_paths.append(f"{self._cache_dir}{self._cache_prefix}{i}.json")
 
@@ -176,14 +176,13 @@ class AssociationRulesMiner:
                 two associated products.
         """
         total_pairs = len(pairs)
-        unique_products = set()
+        unique_products = set[str]()
         support_values: list[float] = []
         confidence_values: list[float] = []
         lift_values: list[float] = []
 
         for pair in pairs:
-            if not isinstance(pair, (list, tuple)):
-                continue
+
             if len(pair) >= 2:
                 unique_products.add(str(pair[0]))
                 unique_products.add(str(pair[1]))

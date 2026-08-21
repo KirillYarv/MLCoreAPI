@@ -150,7 +150,7 @@ class AlternatingLeastSquaresService:
             top_k=top_k,
         )
 
-    def _get_repository_data(self, transactions_postfix: str) -> None:
+    def _get_repository_data(self, transactions_postfix: str) -> pd.DataFrame:
         """Load interactions for one partition and persist them to cache.
 
         Args:
@@ -218,7 +218,7 @@ class AlternatingLeastSquaresService:
         return recs
 
     def _filter_data(
-        self, df: pd.DataFrame, user_count=10, item_count=20
+        self, df: pd.DataFrame, user_count: int = 10, item_count: int = 20
     ) -> pd.DataFrame:
         item_counts = df.groupby("article_id")["customer_id"].count()
         pop_items = item_counts[item_counts >= item_count]

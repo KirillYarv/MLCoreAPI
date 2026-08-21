@@ -7,11 +7,9 @@ from fastapi import FastAPI
 
 from src.repository.AlsRepository import AlsRepository
 from src.repository.ArlRepository import ArlRepository
-from src.repository.DbInfoRepository import DbInfoRepository
 from src.service.ALS import AlternatingLeastSquaresService
 from src.service.ARL import AssociationRulesMiner
 from src.service.CacheService import JsonFileCacheService, RedisCacheService
-from src.service.DbConnectionService import DbConnectionService
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -29,7 +27,6 @@ miner = AssociationRulesMiner(
 als_service = AlternatingLeastSquaresService(
     als_repo=AlsRepository(),
 )
-db_connection_service = DbConnectionService(db_info_repo=DbInfoRepository())
 
 app = FastAPI()
 
@@ -108,7 +105,7 @@ def get_pairs_by_id(product_id: str):
         )
 
     data = miner.get_pairs()
-    filtered_data = []
+    filtered_data: list[str] = []
     for pair in data:
         if product_id in pair[0]:
             filtered_data.append(pair[1])
@@ -160,7 +157,7 @@ def get_als_recommendations(user_id: str, top_k: int = 12):
             message=str(error),
         )
 
-    user_recommendations = []
+    user_recommendations: list[Dict[str, Any]] = []
     for recommendation in recommendations:
         if str(recommendation.get("customer_id")) == str(user_id):
             user_recommendations.append(recommendation)
@@ -210,25 +207,4 @@ def refresh_als_recommendations(top_k: int = 12):
         status="success",
         data={"users_count": recommendation_count, "top_k": top_k},
         message="ALS recommendations were refreshed",
-    )
-
-
-@app.get("/db/isconnect")
-def is_connect():
-    logging.info("Catch /db/isconnect")
-    start = perf_counter()
-    db_status = db_connection_service.check_connection()
-
-    if not db_status["is_connected"]:
-        return get_response(
-            status="error",
-            data=db_status,
-            message="Database is not connected",
-        )
-    end = perf_counter()
-    logging.info(f"is_connect took {end - start} seconds")
-    return get_response(
-        status="success",
-        data=db_status,
-        message="Database connectivity check completed",
     )

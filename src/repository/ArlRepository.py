@@ -31,7 +31,7 @@ class ArlRepository:
 
     def get_transactions(
         self, transactions_postfix: str, limit: int = -1
-    ) -> tuple[list[str], float]:
+    ) -> tuple[list[list[str]], float]:
         connection = psycopg2.connect(
             database=self.database,
             user=self.user,
@@ -65,7 +65,7 @@ class ArlRepository:
                     break
                 transactions.extend(rows)
 
-            prod_ids = []
+            prod_ids: list[list[str]] = []
 
             for t in transactions:
                 if len(t[2].split("$$ ")) > 1:
