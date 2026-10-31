@@ -18,6 +18,8 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
+PAIR_CACHE_TIME = 86400
+
 cache_service = RedisCacheService()
 json_cache_service = JsonFileCacheService()
 
@@ -79,7 +81,7 @@ def get_pairs():
         )
     pairs = miner.get_pairs()
 
-    cache_service.save(pairs, "pairs_result")
+    cache_service.save(pairs, "pairs_result", PAIR_CACHE_TIME)
 
     end = perf_counter()
     logging.info(f"get_pairs took {end - start} seconds")
@@ -114,7 +116,7 @@ def get_pairs_by_id(product_id: str):
             filtered_data.append(pair[0])
 
     filtered_data = list(set(filtered_data))
-    cache_service.save(filtered_data, f"pairs_result_{product_id}")
+    cache_service.save(filtered_data, f"pairs_result_{product_id}", PAIR_CACHE_TIME)
 
     end = perf_counter()
     logging.info(f"get_pairs_by_id took {end - start} seconds")

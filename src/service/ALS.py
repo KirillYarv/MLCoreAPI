@@ -358,32 +358,6 @@ class AlternatingLeastSquaresService:
         )
         return coo
 
-    def _train_test_split_over(
-        self,
-        clickstream_df: pd.DataFrame,
-        test_quantile: float = 0.8,
-    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """
-        Split clickstream by date.
-        """
-        clickstream_df = clickstream_df.sort_values(["customer_id", "t_dat"])
-
-        test_timepoint = (
-            clickstream_df["t_dat"]
-            .drop_duplicates()
-            .quantile(q=test_quantile, interpolation="nearest")
-        )
-
-        test = clickstream_df.query(f"{'t_dat'} >= @test_timepoint")
-        train = clickstream_df.drop(test.index)
-
-        test = test[test["customer_id"].isin(train["customer_id"])]
-        test = test[test["article_id"].isin(train["article_id"])]
-
-        test.reset_index(drop=True, inplace=True)
-        train.reset_index(drop=True, inplace=True)
-
-        return train, test
 
     def _validate_gpu_configuration(self) -> None:
         """
